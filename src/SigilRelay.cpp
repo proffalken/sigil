@@ -2,14 +2,18 @@
 
 // ── Constructor ────────────────────────────────────────────────────────────
 
-SigilRelay::SigilRelay(const char* relayId, const char* location)
+SigilRelay::SigilRelay(const char* relayId)
     : _relayId(relayId)
-    , _location(location)
     , _rs485(nullptr)
     , _device(nullptr)
+    , _attrs()
 {}
 
 // ── Public API ─────────────────────────────────────────────────────────────
+
+void SigilRelay::addAttribute(const char* key, const char* value) {
+    _attrs.add(key, value);
+}
 
 void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs485Rx,  int rs485Tx,
                        HardwareSerial& deviceSerial, uint32_t deviceBaud, int deviceRx, int deviceTx) {
@@ -53,10 +57,14 @@ void SigilRelay::_forwardToRS485(const String& json) {
     DeserializationError err = deserializeJson(doc, json);
     if (err) return;
 
-    // Augment with relay metadata before forwarding
-    doc["location"] = _location;
+    // Protocol fields at top level
     doc["relay_id"] = _relayId;
     doc["relay_ts"] = millis();
+
+    // Merge relay attributes into the "attributes" object.
+    // Any device attributes already present are preserved;
+    // relay values win on key collision.
+    _attrs.applyTo(doc);
 
     String output;
     serializeJson(doc, output);

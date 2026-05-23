@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <HardwareSerial.h>
 #include <initializer_list>
+#include "SigilAttributes.h"
 
 // ── Limits (override before including this header if needed) ───────────────
 #ifndef SIGIL_MAX_CAPABILITIES
@@ -38,6 +39,7 @@ struct SigilHandler {
 //   SigilDevice device("servo01", "actuator", "home_automation");
 //
 //   void setup() {
+//     device.addAttribute("serial", "SV-001");
 //     device.addCapability("set_angle", "Set servo angle", {"channel", "angle", "speed"});
 //     device.onCommand("set_angle", handleSetAngle);
 //     device.begin(Serial1, 115200, RX_PIN, TX_PIN);
@@ -56,6 +58,11 @@ public:
     SigilDevice(const char* deviceId,
                 const char* deviceType,
                 const char* systemName);
+
+    // Add a freeform attribute (key/value) that will be included in all
+    // outgoing messages under the "attributes" object.
+    // Call before begin(). Silently capped at SIGIL_MAX_ATTRIBUTES.
+    void addAttribute(const char* key, const char* value);
 
     // Declare a capability this device advertises on registration.
     // Call before begin(). Silently capped at SIGIL_MAX_CAPABILITIES.
@@ -81,12 +88,14 @@ public:
 
     // Send a single sensor reading as a data message.
     // T may be any type ArduinoJson can serialise (int, float, bool, etc.)
+    // Device attributes are included automatically under "attributes".
     template <typename T>
     void sendReading(const char* name, T value) {
         JsonDocument doc;
         doc["msg_type"]    = "data";
         doc["device_id"]   = _deviceId;
         doc["system_name"] = _systemName;
+        _attrs.applyTo(doc);
         JsonArray readings = doc["readings"].to<JsonArray>();
         JsonObject r       = readings.add<JsonObject>();
         r["name"]          = name;
@@ -95,17 +104,19 @@ public:
     }
 
 private:
-    const char*     _deviceId;
-    const char*     _deviceType;
-    const char*     _systemName;
-    HardwareSerial* _serial;
-    bool            _registered;
+    const char*      _deviceId;
+    const char*      _deviceType;
+    const char*      _systemName;
+    HardwareSerial*  _serial;
+    bool             _registered;
 
-    SigilCapability _capabilities[SIGIL_MAX_CAPABILITIES];
-    uint8_t         _capCount;
+    SigilAttributes  _attrs;
 
-    SigilHandler    _handlers[SIGIL_MAX_HANDLERS];
-    uint8_t         _handlerCount;
+    SigilCapability  _capabilities[SIGIL_MAX_CAPABILITIES];
+    uint8_t          _capCount;
+
+    SigilHandler     _handlers[SIGIL_MAX_HANDLERS];
+    uint8_t          _handlerCount;
 
     void _sendRegister();
     void _handleMessage(const String& json);

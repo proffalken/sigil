@@ -1,4 +1,5 @@
 #include "SigilDevice.h"
+#include "SigilAttributes.h"
 #include <string.h>
 
 // ── Constructor ────────────────────────────────────────────────────────────
@@ -13,9 +14,14 @@ SigilDevice::SigilDevice(const char* deviceId,
     , _registered(false)
     , _capCount(0)
     , _handlerCount(0)
+    , _attrs()
 {}
 
 // ── Public API ─────────────────────────────────────────────────────────────
+
+void SigilDevice::addAttribute(const char* key, const char* value) {
+    _attrs.add(key, value);
+}
 
 void SigilDevice::addCapability(const char* name,
                                 const char* description,
@@ -82,6 +88,7 @@ void SigilDevice::_sendRegister() {
     doc["device_id"]   = _deviceId;
     doc["device_type"] = _deviceType;
     doc["system_name"] = _systemName;
+    _attrs.applyTo(doc);
 
     JsonArray caps = doc["capabilities"].to<JsonArray>();
     for (uint8_t i = 0; i < _capCount; i++) {

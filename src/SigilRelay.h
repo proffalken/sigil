@@ -3,24 +3,29 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HardwareSerial.h>
+#include "SigilAttributes.h"
 
 // ── SigilRelay ─────────────────────────────────────────────────────────────
 //
 // Bridges a single end device (connected via pogo pins) to the RS485 bus.
-// Augments every upstream message with location, relay_id, and relay_ts.
-// Passes downstream messages (commands, acks) through to the device unchanged.
+// Augments every upstream message with relay_id, relay_ts, and any
+// attributes added via addAttribute().
+//
+// Relay attributes are merged into the "attributes" object alongside any
+// device attributes already in the message. On key collision, the relay
+// value wins.
 //
 // The relay is deliberately namespace-agnostic: it forwards everything and
-// lets end devices filter for themselves. This means any device from any
-// system_name can be plugged into any relay.
+// lets end devices filter for themselves.
 //
 // Usage:
 //   HardwareSerial rs485(1);
 //   HardwareSerial deviceSerial(2);
-//   SigilRelay relay("relay01", "office");
+//   SigilRelay relay("relay01");
 //
 //   void setup() {
-//     Serial.begin(115200);
+//     relay.addAttribute("location", "office");
+//     relay.addAttribute("area", "desk");
 //     relay.begin(rs485,       115200, 22, 21,
 //                 deviceSerial, 115200, 16, 17);
 //   }
@@ -31,9 +36,14 @@
 //
 class SigilRelay {
 public:
-    // relayId  : unique identifier for this relay on the network
-    // location : human-readable physical location (e.g. "office", "kitchen")
-    SigilRelay(const char* relayId, const char* location);
+    // relayId: unique identifier for this relay on the network.
+    // Location and other metadata are set via addAttribute().
+    explicit SigilRelay(const char* relayId);
+
+    // Add a freeform attribute (key/value) that will be merged into the
+    // "attributes" object of every message forwarded upstream.
+    // Call before begin(). Silently capped at SIGIL_MAX_ATTRIBUTES.
+    void addAttribute(const char* key, const char* value);
 
     // Initialise both UARTs.
     //   rs485Serial / rs485Baud / rs485Rx / rs485Tx  : RS485 bus connection
@@ -46,9 +56,9 @@ public:
 
 private:
     const char*     _relayId;
-    const char*     _location;
     HardwareSerial* _rs485;
     HardwareSerial* _device;
+    SigilAttributes _attrs;
 
     void _forwardToRS485(const String& json);
     void _forwardToDevice(const String& json);

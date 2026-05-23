@@ -52,6 +52,10 @@ void handleSetAngle(JsonObjectConst params) {
 void setup() {
     Serial.begin(115200);  // debug
 
+    // Freeform attributes — appear in every outgoing message
+    device.addAttribute("serial",   "SV-001");
+    device.addAttribute("hw_rev",   "1.0");
+
     device.addCapability("set_angle", "Set servo angle", {"channel", "angle", "speed"});
     device.addCapability("get_angle", "Read current servo angle", {"channel"});
 
@@ -79,10 +83,15 @@ void loop() {
 
 HardwareSerial rs485(1);
 HardwareSerial deviceSerial(2);
-SigilRelay relay("relay01", "office");
+SigilRelay relay("relay01");
 
 void setup() {
     Serial.begin(115200);  // debug
+
+    // Freeform attributes — merged into every message forwarded upstream
+    relay.addAttribute("location", "office");
+    relay.addAttribute("area",     "desk");
+
     relay.begin(
         rs485,        115200, /*rx=*/22, /*tx=*/21,
         deviceSerial, 115200, /*rx=*/16, /*tx=*/17
@@ -105,6 +114,11 @@ SigilDevice(const char* deviceId, const char* deviceType, const char* systemName
 ```
 - `deviceType`: `"sensor"`, `"actuator"`, or `"sensor_actuator"`
 - `systemName`: namespace — device ignores commands from other namespaces
+
+```cpp
+void addAttribute(const char* key, const char* value)
+```
+Add a freeform attribute included in all outgoing messages under `"attributes"`. Call before `begin()`. Capped at `SIGIL_MAX_ATTRIBUTES` (default 16).
 
 ```cpp
 void addCapability(const char* name, const char* description,
@@ -137,8 +151,13 @@ Send a single sensor reading. `T` can be any type ArduinoJson can serialise (`in
 ### `SigilRelay`
 
 ```cpp
-SigilRelay(const char* relayId, const char* location)
+SigilRelay(const char* relayId)
 ```
+
+```cpp
+void addAttribute(const char* key, const char* value)
+```
+Add a freeform attribute merged into every message forwarded upstream. Device attributes already in the message are preserved; relay values win on key collision. Call before `begin()`.
 
 ```cpp
 void begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs485Rx,  int rs485Tx,
@@ -155,9 +174,10 @@ Call every `loop()` iteration.
 Override these **before** including any Sigil header:
 
 ```cpp
-#define SIGIL_MAX_CAPABILITIES  8   // max capabilities per device
-#define SIGIL_MAX_PARAMS        8   // max params per capability
-#define SIGIL_MAX_HANDLERS      8   // max command handlers per device
+#define SIGIL_MAX_ATTRIBUTES    16  // max attributes per device or relay
+#define SIGIL_MAX_CAPABILITIES   8  // max capabilities per device
+#define SIGIL_MAX_PARAMS         8  // max params per capability
+#define SIGIL_MAX_HANDLERS       8  // max command handlers per device
 #include <SigilDevice.h>
 ```
 

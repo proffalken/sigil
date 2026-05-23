@@ -5,5 +5,6 @@
 //   #include <SigilDevice.h>   // end devices only
 //   #include <SigilRelay.h>    // relays only
 
+#include "SigilAttributes.h"
 #include "SigilDevice.h"
 #include "SigilRelay.h"

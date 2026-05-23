@@ -1,0 +1,64 @@
+#pragma once
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <string.h>
+
+// ── Limits ─────────────────────────────────────────────────────────────────
+#ifndef SIGIL_MAX_ATTRIBUTES
+#define SIGIL_MAX_ATTRIBUTES 16
+#endif
+
+// ── SigilAttributes ────────────────────────────────────────────────────────
+//
+// Stores a flat list of freeform key/value string attributes, inspired by
+// the OpenTelemetry attributes model.
+//
+// Used by both SigilDevice and SigilRelay. When applied to a JsonDocument,
+// attributes are written into a nested "attributes" object. If one already
+// exists (e.g. device attributes carried through to the relay), the relay's
+// attributes are merged in — relay values win on key collision.
+//
+class SigilAttributes {
+public:
+    SigilAttributes() : _count(0) {}
+
+    // Add a freeform attribute. Silently capped at SIGIL_MAX_ATTRIBUTES.
+    void add(const char* key, const char* value) {
+        if (_count >= SIGIL_MAX_ATTRIBUTES) return;
+        strncpy(_entries[_count].key,   key,   sizeof(_entries[0].key)   - 1);
+        strncpy(_entries[_count].value, value, sizeof(_entries[0].value) - 1);
+        _entries[_count].key  [sizeof(_entries[0].key)   - 1] = '\0';
+        _entries[_count].value[sizeof(_entries[0].value) - 1] = '\0';
+        _count++;
+    }
+
+    // Merge all stored attributes into doc["attributes"].
+    // Creates the nested object if it doesn't exist yet.
+    // Existing keys are overwritten (caller wins).
+    void applyTo(JsonDocument& doc) const {
+        if (_count == 0) return;
+
+        JsonObject attrs;
+        if (doc["attributes"].is<JsonObject>()) {
+            attrs = doc["attributes"].as<JsonObject>();
+        } else {
+            attrs = doc["attributes"].to<JsonObject>();
+        }
+
+        for (uint8_t i = 0; i < _count; i++) {
+            attrs[_entries[i].key] = _entries[i].value;
+        }
+    }
+
+    uint8_t count() const { return _count; }
+
+private:
+    struct Entry {
+        char key  [32];
+        char value[64];
+    };
+
+    Entry   _entries[SIGIL_MAX_ATTRIBUTES];
+    uint8_t _count;
+};

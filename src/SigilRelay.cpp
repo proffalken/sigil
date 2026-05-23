@@ -7,12 +7,18 @@ SigilRelay::SigilRelay(const char* relayId)
     , _rs485(nullptr)
     , _device(nullptr)
     , _attrs()
+    , _debug(nullptr)
 {}
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
 void SigilRelay::addAttribute(const char* key, const char* value) {
     _attrs.add(key, value);
+}
+
+void SigilRelay::setDebugStream(Stream& stream) {
+    _debug = &stream;
+    _debugln("[sigil] debug enabled");
 }
 
 void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs485Rx,  int rs485Tx,
@@ -26,26 +32,36 @@ void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs
     // Flush any startup noise before the end device begins transmitting
     delay(100);
     while (_device->available()) _device->read();
+
+    _debugln("[sigil] relay ready");
 }
 
 void SigilRelay::update() {
     // --- Device → RS485 bus ---
     if (_device && _device->available()) {
         String raw = _device->readStringUntil('\n');
+        _debugln("[sigil] rx from device: " + raw);
+
         int jsonStart = raw.indexOf('{');
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
             _forwardToRS485(raw);
+        } else {
+            _debugln("[sigil] no JSON found in device message");
         }
     }
 
     // --- RS485 bus → Device ---
     if (_rs485 && _rs485->available()) {
         String raw = _rs485->readStringUntil('\n');
+        _debugln("[sigil] rx from RS485: " + raw);
+
         int jsonStart = raw.indexOf('{');
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
             _forwardToDevice(raw);
+        } else {
+            _debugln("[sigil] no JSON found in RS485 message");
         }
     }
 }
@@ -55,7 +71,12 @@ void SigilRelay::update() {
 void SigilRelay::_forwardToRS485(const String& json) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
-    if (err) return;
+
+    if (err) {
+        _debugln("[sigil] JSON parse error: " + String(err.c_str()));
+        _debugln("[sigil] failed input: " + json);
+        return;
+    }
 
     // Protocol fields at top level
     doc["relay_id"] = _relayId;
@@ -70,8 +91,16 @@ void SigilRelay::_forwardToRS485(const String& json) {
     serializeJson(doc, output);
     output += '\n';
     _rs485->print(output);
+    _debugln("[sigil] forwarded to RS485: " + output);
 }
 
 void SigilRelay::_forwardToDevice(const String& json) {
-    if (_device) _device->print(json + '\n');
+    if (_device) {
+        _device->print(json + '\n');
+        _debugln("[sigil] forwarded to device: " + json);
+    }
+}
+
+void SigilRelay::_debugln(const String& msg) {
+    if (_debug) _debug->println(msg);
 }

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HardwareSerial.h>
+#include <Stream.h>
 #include "SigilAttributes.h"
 
 // ── SigilRelay ─────────────────────────────────────────────────────────────
@@ -51,6 +52,12 @@ public:
     void begin(HardwareSerial& rs485Serial,   uint32_t rs485Baud,   int rs485Rx,  int rs485Tx,
                HardwareSerial& deviceSerial,  uint32_t deviceBaud,  int deviceRx, int deviceTx);
 
+    // Optional: direct relay debug output to a Stream (e.g. Serial).
+    // When set, logs every received message, parse errors, and forwarded
+    // output so you can trace exactly what the relay is doing.
+    // Call before begin().
+    void setDebugStream(Stream& stream);
+
     // Call once per loop().
     void update();
 
@@ -59,7 +66,9 @@ private:
     HardwareSerial* _rs485;
     HardwareSerial* _device;
     SigilAttributes _attrs;
+    Stream*         _debug;   // nullptr = debug off
 
     void _forwardToRS485(const String& json);
     void _forwardToDevice(const String& json);
+    void _debugln(const String& msg);
 };

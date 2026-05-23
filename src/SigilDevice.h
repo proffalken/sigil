@@ -1,0 +1,113 @@
+#pragma once
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <HardwareSerial.h>
+#include <initializer_list>
+
+// ── Limits (override before including this header if needed) ───────────────
+#ifndef SIGIL_MAX_CAPABILITIES
+#define SIGIL_MAX_CAPABILITIES  8
+#endif
+#ifndef SIGIL_MAX_PARAMS
+#define SIGIL_MAX_PARAMS        8
+#endif
+#ifndef SIGIL_MAX_HANDLERS
+#define SIGIL_MAX_HANDLERS      8
+#endif
+
+// ── Internal storage types ─────────────────────────────────────────────────
+
+struct SigilCapability {
+    char    name[32];
+    char    description[64];
+    char    params[SIGIL_MAX_PARAMS][32];
+    uint8_t paramCount;
+};
+
+struct SigilHandler {
+    char name[32];
+    void (*fn)(JsonObjectConst params);
+};
+
+// ── SigilDevice ────────────────────────────────────────────────────────────
+//
+// Represents a single end device on the Sigil network.
+//
+// Usage:
+//   SigilDevice device("servo01", "actuator", "home_automation");
+//
+//   void setup() {
+//     device.addCapability("set_angle", "Set servo angle", {"channel", "angle", "speed"});
+//     device.onCommand("set_angle", handleSetAngle);
+//     device.begin(Serial1, 115200, RX_PIN, TX_PIN);
+//   }
+//
+//   void loop() {
+//     device.update();
+//     device.sendReading("position", myServo.read());
+//   }
+//
+class SigilDevice {
+public:
+    // deviceId   : unique name for this device on the network (e.g. "servo01")
+    // deviceType : "sensor", "actuator", or "sensor_actuator"
+    // systemName : namespace — device only responds to commands matching this
+    SigilDevice(const char* deviceId,
+                const char* deviceType,
+                const char* systemName);
+
+    // Declare a capability this device advertises on registration.
+    // Call before begin(). Silently capped at SIGIL_MAX_CAPABILITIES.
+    void addCapability(const char* name,
+                       const char* description,
+                       std::initializer_list<const char*> params = {});
+
+    // Register a handler for an incoming command by name.
+    // Silently capped at SIGIL_MAX_HANDLERS.
+    void onCommand(const char* name, void (*handler)(JsonObjectConst params));
+
+    // Initialise the serial link to the relay and send the register message.
+    // bootDelayMs: pause before registering to let the relay start up.
+    void begin(HardwareSerial& serial,
+               uint32_t baud,
+               int rxPin,
+               int txPin,
+               uint32_t bootDelayMs = 500);
+
+    // Call once per loop(). Sends register on first call, then polls for
+    // incoming commands/acks from the relay.
+    void update();
+
+    // Send a single sensor reading as a data message.
+    // T may be any type ArduinoJson can serialise (int, float, bool, etc.)
+    template <typename T>
+    void sendReading(const char* name, T value) {
+        JsonDocument doc;
+        doc["msg_type"]    = "data";
+        doc["device_id"]   = _deviceId;
+        doc["system_name"] = _systemName;
+        JsonArray readings = doc["readings"].to<JsonArray>();
+        JsonObject r       = readings.add<JsonObject>();
+        r["name"]          = name;
+        r["value"]         = value;
+        _sendJson(doc);
+    }
+
+private:
+    const char*     _deviceId;
+    const char*     _deviceType;
+    const char*     _systemName;
+    HardwareSerial* _serial;
+    bool            _registered;
+
+    SigilCapability _capabilities[SIGIL_MAX_CAPABILITIES];
+    uint8_t         _capCount;
+
+    SigilHandler    _handlers[SIGIL_MAX_HANDLERS];
+    uint8_t         _handlerCount;
+
+    void _sendRegister();
+    void _handleMessage(const String& json);
+    void _sendJson(JsonDocument& doc);
+};

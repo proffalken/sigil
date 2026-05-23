@@ -21,14 +21,14 @@ Sigil handles the boilerplate of building devices for a shared RS485 bus: regist
 ### From the PlatformIO registry (once published)
 
 ```ini
-lib_deps = mattmacwall/Sigil
+lib_deps = proffalken/Sigil
 ```
 
 ### From GitHub (available now)
 
 ```ini
 lib_deps =
-    https://github.com/mattmacwall/sigil.git
+    https://github.com/proffalken/sigil.git
     bblanchon/ArduinoJson@^7.0.0
 ```
 
@@ -178,7 +178,7 @@ See the [WHH project documentation](https://github.com/mattmacwall/WHH) for the 
    ```bash
    pio pkg publish
    ```
-5. The library will be available as `lib_deps = mattmacwall/Sigil`
+5. The library will be available as `lib_deps = proffalken/Sigil`
 
 Update `library.json` with the correct GitHub URL before publishing.
 

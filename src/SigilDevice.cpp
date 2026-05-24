@@ -12,6 +12,8 @@ SigilDevice::SigilDevice(const char* deviceId,
     , _systemName(systemName)
     , _serial(nullptr)
     , _registered(false)
+    , _lastRegisterMs(0)
+    , _registerIntervalMs(30000)
     , _capCount(0)
     , _handlerCount(0)
     , _attrs()
@@ -59,20 +61,40 @@ void SigilDevice::begin(HardwareSerial& serial,
                         uint32_t bootDelayMs) {
     _serial = &serial;
     _serial->begin(baud, SERIAL_8N1, rxPin, txPin);
-    delay(bootDelayMs);   // give the relay time to start up before we register
+    delay(bootDelayMs);   // wait for bootloader noise to clear before registering
+}
+
+void SigilDevice::setRegisterInterval(uint32_t ms) {
+    _registerIntervalMs = ms;
+}
+
+// String::indexOf() stops at embedded NUL bytes, which appear in bootloader
+// noise. This helper scans byte-by-byte so it is unaffected by embedded nulls.
+static int findBrace(const String& s) {
+    for (unsigned int i = 0; i < s.length(); i++) {
+        if (s[i] == '{') return (int)i;
+    }
+    return -1;
 }
 
 void SigilDevice::update() {
-    // Send registration exactly once, on the first call after begin()
-    if (!_registered) {
+    unsigned long now = millis();
+
+    // Send registration on first call, then periodically thereafter so that
+    // a late-starting console or a relay reboot will still pick us up.
+    bool due = !_registered
+               || (_registerIntervalMs > 0
+                   && (now - _lastRegisterMs) >= _registerIntervalMs);
+    if (due) {
         _sendRegister();
-        _registered = true;
+        _registered     = true;
+        _lastRegisterMs = now;
     }
 
     // Poll for incoming messages (commands, acks) from the relay
     while (_serial && _serial->available()) {
         String raw = _serial->readStringUntil('\n');
-        int jsonStart = raw.indexOf('{');
+        int jsonStart = findBrace(raw);
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
             _handleMessage(raw);

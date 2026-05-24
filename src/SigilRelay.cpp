@@ -36,13 +36,23 @@ void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs
     _debugln("[sigil] relay ready");
 }
 
+// String::indexOf() stops at embedded NUL bytes, which appear in bootloader
+// noise from the end device. This helper scans byte-by-byte via operator[]
+// so it is unaffected by nulls embedded in the string data.
+static int findBrace(const String& s) {
+    for (unsigned int i = 0; i < s.length(); i++) {
+        if (s[i] == '{') return (int)i;
+    }
+    return -1;
+}
+
 void SigilRelay::update() {
     // --- Device → RS485 bus ---
     if (_device && _device->available()) {
         String raw = _device->readStringUntil('\n');
         _debugln("[sigil] rx from device: " + raw);
 
-        int jsonStart = raw.indexOf('{');
+        int jsonStart = findBrace(raw);
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
             _forwardToRS485(raw);
@@ -56,7 +66,7 @@ void SigilRelay::update() {
         String raw = _rs485->readStringUntil('\n');
         _debugln("[sigil] rx from RS485: " + raw);
 
-        int jsonStart = raw.indexOf('{');
+        int jsonStart = findBrace(raw);
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
             _forwardToDevice(raw);

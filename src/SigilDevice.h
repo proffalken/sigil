@@ -74,16 +74,22 @@ public:
     // Silently capped at SIGIL_MAX_HANDLERS.
     void onCommand(const char* name, void (*handler)(JsonObjectConst params));
 
-    // Initialise the serial link to the relay and send the register message.
-    // bootDelayMs: pause before registering to let the relay start up.
+    // Initialise the serial link to the relay.
+    // bootDelayMs: pause before sending the first register message.
+    // 2000 ms is the default — long enough to clear ESP32 bootloader noise.
     void begin(HardwareSerial& serial,
                uint32_t baud,
                int rxPin,
                int txPin,
-               uint32_t bootDelayMs = 500);
+               uint32_t bootDelayMs = 2000);
 
-    // Call once per loop(). Sends register on first call, then polls for
-    // incoming commands/acks from the relay.
+    // Set how often the device re-sends its registration message (ms).
+    // Default: 30000 (30 s). Set to 0 to disable periodic re-registration.
+    // Call before or after begin().
+    void setRegisterInterval(uint32_t ms);
+
+    // Call once per loop(). Sends register on first call (and periodically
+    // thereafter), then polls for incoming commands/acks from the relay.
     void update();
 
     // Send a single sensor reading as a data message.
@@ -109,6 +115,8 @@ private:
     const char*      _systemName;
     HardwareSerial*  _serial;
     bool             _registered;
+    unsigned long    _lastRegisterMs;    // millis() when we last sent a register
+    uint32_t         _registerIntervalMs;// 0 = no periodic re-registration
 
     SigilAttributes  _attrs;
 

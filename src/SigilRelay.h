@@ -19,6 +19,29 @@
 // The relay is deliberately namespace-agnostic: it forwards everything and
 // lets end devices filter for themselves.
 //
+// ── Optional OTel metrics ──────────────────────────────────────────────────
+//
+// Define SIGIL_OTEL_ENABLED in your build flags to enable OpenTelemetry
+// metrics. When enabled, the relay:
+//   • Connects to WiFi via WiFiManager (captive portal on first boot,
+//     stored credentials on subsequent boots — no hardcoded passwords).
+//   • Syncs time via NTP (required for accurate OTel timestamps).
+//   • Emits the following metrics to your OTEL_COLLECTOR_BASE_URL every
+//     60 seconds (configurable via setMetricsInterval()):
+//       sigil.relay.messages.upstream    - device → RS485 (cumulative)
+//       sigil.relay.messages.downstream  - RS485 → device (cumulative)
+//       sigil.relay.messages.dropped     - JSON parse failures (cumulative)
+//       sigil.relay.registrations        - register messages seen (cumulative)
+//       sigil.relay.uptime_seconds       - time since begin() (gauge)
+//       sigil.relay.last_message_age_ms  - ms since last upstream msg (gauge)
+//
+// Required extra lib_deps when SIGIL_OTEL_ENABLED is set:
+//   tzapu/WiFiManager
+//   https://github.com/proffalken/otel-embedded-cpp.git
+//
+// Required extra build_flags:
+//   -D OTEL_COLLECTOR_BASE_URL='"http://your-collector:4318"'
+//
 // Usage:
 //   HardwareSerial rs485(1);
 //   HardwareSerial deviceSerial(2);
@@ -26,7 +49,6 @@
 //
 //   void setup() {
 //     relay.addAttribute("location", "office");
-//     relay.addAttribute("area", "desk");
 //     relay.begin(rs485,       115200, 22, 21,
 //                 deviceSerial, 115200, 16, 17);
 //   }
@@ -49,6 +71,7 @@ public:
     // Initialise both UARTs.
     //   rs485Serial / rs485Baud / rs485Rx / rs485Tx  : RS485 bus connection
     //   deviceSerial / deviceBaud / deviceRx / deviceTx : end-device pogo-pin connection
+    // When SIGIL_OTEL_ENABLED is defined, also starts WiFiManager and NTP.
     void begin(HardwareSerial& rs485Serial,   uint32_t rs485Baud,   int rs485Rx,  int rs485Tx,
                HardwareSerial& deviceSerial,  uint32_t deviceBaud,  int deviceRx, int deviceTx);
 
@@ -61,6 +84,12 @@ public:
     // Call once per loop().
     void update();
 
+#ifdef SIGIL_OTEL_ENABLED
+    // Set how often OTel metrics are emitted (ms). Default: 60 000 (60 s).
+    // Call before or after begin(). Pass 0 to disable periodic emission.
+    void setMetricsInterval(uint32_t ms);
+#endif
+
 private:
     const char*     _relayId;
     HardwareSerial* _rs485;
@@ -71,4 +100,19 @@ private:
     void _forwardToRS485(const String& json);
     void _forwardToDevice(const String& json);
     void _debugln(const String& msg);
+
+#ifdef SIGIL_OTEL_ENABLED
+    bool          _otelReady;          // true once WiFi + NTP + OTel are up
+    uint32_t      _msgsUpstream;       // device → RS485, cumulative
+    uint32_t      _msgsDownstream;     // RS485 → device, cumulative
+    uint32_t      _msgsDropped;        // JSON parse failures, cumulative
+    uint32_t      _registrationsSeen;  // register msg_type, cumulative
+    unsigned long _lastMessageMs;      // millis() of last upstream message
+    unsigned long _lastMetricsMs;      // millis() of last OTel emission
+    uint32_t      _metricsIntervalMs;  // emission period (default 60 000)
+    unsigned long _startMs;            // millis() captured in begin()
+
+    void _initOtel();
+    void _emitMetrics();
+#endif
 };

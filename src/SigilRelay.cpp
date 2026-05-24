@@ -1,5 +1,13 @@
 #include "SigilRelay.h"
 
+#ifdef SIGIL_OTEL_ENABLED
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <OtelMetrics.h>
+#include <OtelDefaults.h>
+#include <time.h>
+#endif
+
 // ── Constructor ────────────────────────────────────────────────────────────
 
 SigilRelay::SigilRelay(const char* relayId)
@@ -8,7 +16,19 @@ SigilRelay::SigilRelay(const char* relayId)
     , _device(nullptr)
     , _attrs()
     , _debug(nullptr)
-{}
+{
+#ifdef SIGIL_OTEL_ENABLED
+    _otelReady         = false;
+    _msgsUpstream      = 0;
+    _msgsDownstream    = 0;
+    _msgsDropped       = 0;
+    _registrationsSeen = 0;
+    _lastMessageMs     = 0;
+    _lastMetricsMs     = 0;
+    _metricsIntervalMs = 60000;
+    _startMs           = 0;
+#endif
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -20,6 +40,12 @@ void SigilRelay::setDebugStream(Stream& stream) {
     _debug = &stream;
     _debugln("[sigil] debug enabled");
 }
+
+#ifdef SIGIL_OTEL_ENABLED
+void SigilRelay::setMetricsInterval(uint32_t ms) {
+    _metricsIntervalMs = ms;
+}
+#endif
 
 void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs485Rx,  int rs485Tx,
                        HardwareSerial& deviceSerial, uint32_t deviceBaud, int deviceRx, int deviceTx) {
@@ -34,19 +60,23 @@ void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs
     while (_device->available()) _device->read();
 
     _debugln("[sigil] relay ready");
-}
 
-// String::indexOf() stops at embedded NUL bytes, which appear in bootloader
-// noise from the end device. This helper scans byte-by-byte via operator[]
-// so it is unaffected by nulls embedded in the string data.
-static int findBrace(const String& s) {
-    for (unsigned int i = 0; i < s.length(); i++) {
-        if (s[i] == '{') return (int)i;
-    }
-    return -1;
+#ifdef SIGIL_OTEL_ENABLED
+    _initOtel();
+#endif
 }
 
 void SigilRelay::update() {
+    // String::indexOf() stops at embedded NUL bytes, which appear in bootloader
+    // noise from the end device. This helper scans byte-by-byte via operator[]
+    // so it is unaffected by nulls embedded in the string data.
+    auto findBrace = [](const String& s) -> int {
+        for (unsigned int i = 0; i < s.length(); i++) {
+            if (s[i] == '{') return (int)i;
+        }
+        return -1;
+    };
+
     // --- Device → RS485 bus ---
     if (_device && _device->available()) {
         String raw = _device->readStringUntil('\n');
@@ -74,6 +104,16 @@ void SigilRelay::update() {
             _debugln("[sigil] no JSON found in RS485 message");
         }
     }
+
+#ifdef SIGIL_OTEL_ENABLED
+    if (_otelReady && _metricsIntervalMs > 0) {
+        unsigned long now = millis();
+        if ((now - _lastMetricsMs) >= _metricsIntervalMs) {
+            _emitMetrics();
+            _lastMetricsMs = now;
+        }
+    }
+#endif
 }
 
 // ── Private helpers ────────────────────────────────────────────────────────
@@ -85,6 +125,9 @@ void SigilRelay::_forwardToRS485(const String& json) {
     if (err) {
         _debugln("[sigil] JSON parse error: " + String(err.c_str()));
         _debugln("[sigil] failed input: " + json);
+#ifdef SIGIL_OTEL_ENABLED
+        _msgsDropped++;
+#endif
         return;
     }
 
@@ -102,15 +145,105 @@ void SigilRelay::_forwardToRS485(const String& json) {
     output += '\n';
     _rs485->print(output);
     _debugln("[sigil] forwarded to RS485: " + output);
+
+#ifdef SIGIL_OTEL_ENABLED
+    _msgsUpstream++;
+    _lastMessageMs = millis();
+    if (strcmp(doc["msg_type"] | "", "register") == 0) _registrationsSeen++;
+#endif
 }
 
 void SigilRelay::_forwardToDevice(const String& json) {
     if (_device) {
         _device->print(json + '\n');
         _debugln("[sigil] forwarded to device: " + json);
+#ifdef SIGIL_OTEL_ENABLED
+        _msgsDownstream++;
+#endif
     }
 }
 
 void SigilRelay::_debugln(const String& msg) {
     if (_debug) _debug->println(msg);
 }
+
+// ── OTel (compiled only when SIGIL_OTEL_ENABLED) ──────────────────────────
+
+#ifdef SIGIL_OTEL_ENABLED
+
+void SigilRelay::_initOtel() {
+    // ── WiFi via WiFiManager ───────────────────────────────────────────────
+    // On first boot (or after a reset), WiFiManager opens a captive-portal AP
+    // named "Sigil-<relayId>". Connect to it with any device, enter your WiFi
+    // credentials, and they are saved to NVS. Subsequent boots connect silently.
+    WiFiManager wm;
+    wm.setConfigPortalTimeout(180);   // close portal after 3 min if unused
+
+    String apName = "Sigil-" + String(_relayId);
+    _debugln("[sigil:otel] starting WiFiManager — AP: " + apName);
+
+    bool connected = wm.autoConnect(apName.c_str());
+    if (!connected) {
+        _debugln("[sigil:otel] WiFi not configured or timed out — OTel disabled");
+        _otelReady = false;
+        return;
+    }
+
+    _debugln("[sigil:otel] WiFi connected: " + WiFi.localIP().toString());
+
+    // ── NTP sync ───────────────────────────────────────────────────────────
+    // otel-embedded-cpp uses gettimeofday() for nanosecond timestamps;
+    // without NTP the timestamps will be wrong but the relay will still work.
+    _debugln("[sigil:otel] syncing NTP...");
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+    time_t now      = 0;
+    uint8_t retries = 0;
+    while (now < 1609459200UL && retries++ < 20) {
+        delay(500);
+        time(&now);
+    }
+    if (now < 1609459200UL) {
+        _debugln("[sigil:otel] NTP sync failed — timestamps may be inaccurate");
+    } else {
+        _debugln("[sigil:otel] NTP synced");
+    }
+
+    // ── OTel resource + metrics init ───────────────────────────────────────
+    auto& res = OTel::defaultResource();
+    res.set("service.name",        "sigil-relay");
+    res.set("service.instance.id", _relayId);
+
+    OTel::Metrics::begin("sigil", "0.4.0");
+    OTel::Metrics::setDefaultMetricLabel("relay_id", _relayId);
+
+    _startMs       = millis();
+    _lastMetricsMs = _startMs;
+    _otelReady     = true;
+    _debugln("[sigil:otel] OTel ready");
+}
+
+void SigilRelay::_emitMetrics() {
+    unsigned long now = millis();
+
+    // Counters — monotonically increasing, cumulative totals
+    OTel::Metrics::sum("sigil.relay.messages.upstream",
+                       (double)_msgsUpstream,   true, "CUMULATIVE", "1");
+    OTel::Metrics::sum("sigil.relay.messages.downstream",
+                       (double)_msgsDownstream, true, "CUMULATIVE", "1");
+    OTel::Metrics::sum("sigil.relay.messages.dropped",
+                       (double)_msgsDropped,    true, "CUMULATIVE", "1");
+    OTel::Metrics::sum("sigil.relay.registrations",
+                       (double)_registrationsSeen, true, "CUMULATIVE", "1");
+
+    // Gauges — instantaneous snapshots
+    OTel::Metrics::gauge("sigil.relay.uptime_seconds",
+                         (double)(now - _startMs) / 1000.0, "s");
+
+    if (_lastMessageMs > 0) {
+        OTel::Metrics::gauge("sigil.relay.last_message_age_ms",
+                             (double)(now - _lastMessageMs), "ms");
+    }
+}
+
+#endif // SIGIL_OTEL_ENABLED

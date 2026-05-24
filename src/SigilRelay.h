@@ -101,6 +101,15 @@ private:
     void _forwardToDevice(const String& json);
     void _debugln(const String& msg);
 
+    // Config message handling and NVS persistence.
+    // A config message addressed to this relay's device_id is consumed here
+    // and never forwarded to the end device.
+    // Attributes are stored in NVS namespace "sigil_r" under key "attrs"
+    // as a serialised JSON object, and reloaded on every boot.
+    void _loadConfig();
+    void _persistConfig();
+    void _handleConfig(JsonDocument& doc);
+
 #ifdef SIGIL_OTEL_ENABLED
     bool          _otelReady;          // true once WiFi + NTP + OTel are up
     uint32_t      _msgsUpstream;       // device → RS485, cumulative

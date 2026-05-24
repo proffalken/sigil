@@ -1,6 +1,7 @@
 #include "SigilDevice.h"
 #include "SigilAttributes.h"
 #include <string.h>
+#include <Preferences.h>
 
 // ── Constructor ────────────────────────────────────────────────────────────
 
@@ -61,6 +62,10 @@ void SigilDevice::begin(HardwareSerial& serial,
                         uint32_t bootDelayMs) {
     _serial = &serial;
     _serial->begin(baud, SERIAL_8N1, rxPin, txPin);
+
+    // Load any previously persisted attributes (location, area, etc.)
+    _loadConfig();
+
     delay(bootDelayMs);   // wait for bootloader noise to clear before registering
 }
 
@@ -133,6 +138,21 @@ void SigilDevice::_handleMessage(const String& json) {
 
     const char* msgType = doc["msg_type"] | "";
 
+    if (strcmp(msgType, "config") == 0) {
+        // Only apply config addressed to this device
+        const char* deviceId = doc["device_id"] | "";
+        if (strcmp(deviceId, _deviceId) != 0) return;
+
+        JsonObjectConst incoming = doc["attributes"].as<JsonObjectConst>();
+        if (!incoming.isNull()) {
+            for (JsonPairConst kv : incoming) {
+                _attrs.add(kv.key().c_str(), kv.value().as<const char*>());
+            }
+            _persistConfig();
+        }
+        return;
+    }
+
     if (strcmp(msgType, "command") == 0) {
         // Only respond to commands addressed to our system_name and device_id
         const char* sysName  = doc["system_name"] | "";
@@ -161,4 +181,32 @@ void SigilDevice::_sendJson(JsonDocument& doc) {
     serializeJson(doc, output);
     output += '\n';
     _serial->print(output);
+}
+
+// ── Config messages and NVS persistence ───────────────────────────────────
+
+void SigilDevice::_loadConfig() {
+    Preferences prefs;
+    prefs.begin("sigil_d", /*readOnly=*/true);
+    String json = prefs.getString("attrs", "{}");
+    prefs.end();
+
+    JsonDocument doc;
+    if (deserializeJson(doc, json) != DeserializationError::Ok) return;
+
+    for (JsonPairConst kv : doc.as<JsonObjectConst>()) {
+        _attrs.add(kv.key().c_str(), kv.value().as<const char*>());
+    }
+}
+
+void SigilDevice::_persistConfig() {
+    JsonDocument tmp;
+    _attrs.applyTo(tmp);                         // writes into tmp["attributes"]
+    String json;
+    serializeJson(tmp["attributes"], json);
+
+    Preferences prefs;
+    prefs.begin("sigil_d", /*readOnly=*/false);
+    prefs.putString("attrs", json);
+    prefs.end();
 }

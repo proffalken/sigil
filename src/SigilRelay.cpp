@@ -1,4 +1,5 @@
 #include "SigilRelay.h"
+#include <Preferences.h>
 
 #ifdef SIGIL_OTEL_ENABLED
 #include <WiFi.h>
@@ -59,6 +60,9 @@ void SigilRelay::begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs
     delay(100);
     while (_device->available()) _device->read();
 
+    // Load any previously persisted attributes (location, area, etc.)
+    _loadConfig();
+
     _debugln("[sigil] relay ready");
 
 #ifdef SIGIL_OTEL_ENABLED
@@ -99,7 +103,18 @@ void SigilRelay::update() {
         int jsonStart = findBrace(raw);
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
-            _forwardToDevice(raw);
+
+            // Config messages addressed to this relay are consumed here —
+            // not forwarded to the end device.
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, raw);
+            if (!err
+                    && strcmp(doc["msg_type"] | "", "config") == 0
+                    && strcmp(doc["device_id"] | "", _relayId)  == 0) {
+                _handleConfig(doc);
+            } else {
+                _forwardToDevice(raw);
+            }
         } else {
             _debugln("[sigil] no JSON found in RS485 message");
         }
@@ -165,6 +180,51 @@ void SigilRelay::_forwardToDevice(const String& json) {
 
 void SigilRelay::_debugln(const String& msg) {
     if (_debug) _debug->println(msg);
+}
+
+// ── Config messages and NVS persistence ───────────────────────────────────
+
+void SigilRelay::_loadConfig() {
+    Preferences prefs;
+    prefs.begin("sigil_r", /*readOnly=*/true);
+    String json = prefs.getString("attrs", "{}");
+    prefs.end();
+
+    JsonDocument doc;
+    if (deserializeJson(doc, json) != DeserializationError::Ok) return;
+
+    for (JsonPairConst kv : doc.as<JsonObjectConst>()) {
+        _attrs.add(kv.key().c_str(), kv.value().as<const char*>());
+    }
+    _debugln("[sigil] loaded persisted config");
+}
+
+void SigilRelay::_persistConfig() {
+    // Serialise current attributes to a JSON object string and save to NVS.
+    JsonDocument tmp;
+    _attrs.applyTo(tmp);                         // writes into tmp["attributes"]
+    String json;
+    serializeJson(tmp["attributes"], json);
+
+    Preferences prefs;
+    prefs.begin("sigil_r", /*readOnly=*/false);
+    prefs.putString("attrs", json);
+    prefs.end();
+}
+
+void SigilRelay::_handleConfig(JsonDocument& doc) {
+    JsonObjectConst incoming = doc["attributes"].as<JsonObjectConst>();
+    if (incoming.isNull()) {
+        _debugln("[sigil] config message has no attributes — ignored");
+        return;
+    }
+
+    for (JsonPairConst kv : incoming) {
+        _attrs.add(kv.key().c_str(), kv.value().as<const char*>());
+    }
+
+    _persistConfig();
+    _debugln("[sigil] config applied and persisted");
 }
 
 // ── OTel (compiled only when SIGIL_OTEL_ENABLED) ──────────────────────────

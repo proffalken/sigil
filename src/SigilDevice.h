@@ -129,4 +129,11 @@ private:
     void _sendRegister();
     void _handleMessage(const String& json);
     void _sendJson(JsonDocument& doc);
+
+    // Config message handling and NVS persistence.
+    // A config message addressed to this device_id is consumed here.
+    // Attributes are stored in NVS namespace "sigil_d" under key "attrs"
+    // as a serialised JSON object, and reloaded on every boot.
+    void _loadConfig();
+    void _persistConfig();
 };

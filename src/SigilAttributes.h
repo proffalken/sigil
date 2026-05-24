@@ -23,8 +23,19 @@ class SigilAttributes {
 public:
     SigilAttributes() : _count(0) {}
 
-    // Add a freeform attribute. Silently capped at SIGIL_MAX_ATTRIBUTES.
+    // Add or update a freeform attribute.
+    // If the key already exists its value is updated in place.
+    // New keys are appended, silently capped at SIGIL_MAX_ATTRIBUTES.
     void add(const char* key, const char* value) {
+        // Update in place if key already present
+        for (uint8_t i = 0; i < _count; i++) {
+            if (strncmp(_entries[i].key, key, sizeof(_entries[0].key)) == 0) {
+                strncpy(_entries[i].value, value, sizeof(_entries[0].value) - 1);
+                _entries[i].value[sizeof(_entries[0].value) - 1] = '\0';
+                return;
+            }
+        }
+        // New key — append
         if (_count >= SIGIL_MAX_ATTRIBUTES) return;
         strncpy(_entries[_count].key,   key,   sizeof(_entries[0].key)   - 1);
         strncpy(_entries[_count].value, value, sizeof(_entries[0].value) - 1);

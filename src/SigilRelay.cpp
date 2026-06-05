@@ -4,8 +4,7 @@
 #ifdef SIGIL_OTEL_ENABLED
 #include <WiFi.h>
 #include <WiFiManager.h>
-#include <OtelMetrics.h>
-#include <OtelDefaults.h>
+#include <OtelEmbeddedCpp.h>
 #include <time.h>
 #endif
 
@@ -155,6 +154,36 @@ void SigilRelay::_forwardToRS485(const String& json) {
     // relay values win on key collision.
     _attrs.applyTo(doc);
 
+#ifdef SIGIL_OTEL_ENABLED
+    if (_otelReady) {
+        // Extract the device's W3C traceparent from the message attributes.
+        // If present, create a child span for the relay hop and inject the
+        // relay's own traceparent so the admin panel continues the same trace.
+        String tp;
+        if (doc["attributes"].is<JsonObject>()) {
+            tp = doc["attributes"]["traceparent"].as<String>();
+        }
+        OTel::ExtractedContext extracted;
+        if (tp.length() > 0 && OTel::parseTraceparent(tp, extracted)) {
+            // Install the device span as the active parent context (RAII).
+            OTel::RemoteParentScope parentScope(extracted.ctx);
+            // This span is a child of the device's puzzle.state span.
+            OTel::Span relaySpan("sigil.relay.forward");
+            relaySpan
+                .setKind(OTel::SpanKind::SERVER)  // displays as CLIENT in Dash0
+                .setAttribute("relay.id", String(_relayId))
+                .setAttribute("sigil.msg_type", String(doc["msg_type"] | ""))
+                .setAttribute("device.id",      String(doc["device_id"] | ""));
+            // Replace device traceparent with relay's — admin panel becomes child of relay.
+            OTel::Propagators::inject([&doc](const char* k, const char* v) {
+                doc["attributes"][k] = v;
+            });
+            relaySpan.setOk();
+            // relaySpan + parentScope destruct here (LIFO), restoring context
+        }
+    }
+#endif
+
     String output;
     serializeJson(doc, output);
     output += '\n';
@@ -274,6 +303,7 @@ void SigilRelay::_initOtel() {
     res.set("service.name",        "sigil-relay");
     res.set("service.instance.id", _relayId);
 
+    OTel::Tracer::begin("sigil-relay", "0.4.0");
     OTel::Metrics::begin("sigil", "0.4.0");
     OTel::Metrics::setDefaultMetricLabel("relay_id", _relayId);
 

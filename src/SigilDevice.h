@@ -63,6 +63,7 @@ public:
     // outgoing messages under the "attributes" object.
     // Call before begin(). Silently capped at SIGIL_MAX_ATTRIBUTES.
     void addAttribute(const char* key, const char* value);
+    void removeAttribute(const char* key);
 
     // Declare a capability this device advertises on registration.
     // Call before begin(). Silently capped at SIGIL_MAX_CAPABILITIES.

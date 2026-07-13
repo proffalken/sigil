@@ -183,12 +183,6 @@ Override these **before** including any Sigil header:
 
 ---
 
-## Message schema
-
-See the [WHH project documentation](https://github.com/mattmacwall/WHH) for the full JSON message schema that Sigil implements.
-
----
-
 ## Publishing to the PlatformIO registry
 
 1. Create a public GitHub repo and push this library to it

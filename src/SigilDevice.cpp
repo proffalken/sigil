@@ -26,6 +26,10 @@ void SigilDevice::addAttribute(const char* key, const char* value) {
     _attrs.add(key, value);
 }
 
+void SigilDevice::removeAttribute(const char* key) {
+    _attrs.remove(key);
+}
+
 void SigilDevice::addCapability(const char* name,
                                 const char* description,
                                 std::initializer_list<const char*> params) {

@@ -62,6 +62,20 @@ public:
         }
     }
 
+    // Remove an attribute by key. No-op if the key is not present.
+    void remove(const char* key) {
+        for (uint8_t i = 0; i < _count; i++) {
+            if (strncmp(_entries[i].key, key, sizeof(_entries[0].key)) == 0) {
+                // Shift remaining entries down to fill the gap
+                for (uint8_t j = i; j < _count - 1; j++) {
+                    _entries[j] = _entries[j + 1];
+                }
+                _count--;
+                return;
+            }
+        }
+    }
+
     uint8_t count() const { return _count; }
 
 private:

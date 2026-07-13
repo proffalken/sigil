@@ -183,18 +183,21 @@ Override these **before** including any Sigil header:
 
 ---
 
-## Publishing to the PlatformIO registry
+## Releasing
 
-1. Create a public GitHub repo and push this library to it
-2. Sign up for a free account at [registry.platformio.org](https://registry.platformio.org)
-3. Install the PlatformIO CLI: `pip install platformio`
-4. From the repo root, run:
-   ```bash
-   pio pkg publish
-   ```
-5. The library will be available as `lib_deps = proffalken/Sigil`
+Every PR runs `pio run` against [`examples/BasicDevice`](examples/BasicDevice) to
+confirm the library still builds (`.github/workflows/pr-build.yml`).
 
-Update `library.json` with the correct GitHub URL before publishing.
+Releasing is automatic: bump the `version` field in `library.json` as part of
+your PR. When it merges to `main`, `.github/workflows/release.yml` tags the
+commit `vX.Y.Z`, creates a GitHub Release, and publishes the new version to
+the PlatformIO registry (`registry.platformio.org`) as `lib_deps =
+proffalken/Sigil`. Merges that don't change `library.json`'s version are a
+no-op for this workflow.
+
+Publishing requires a `PLATFORMIO_AUTH_TOKEN` repo secret — generate one with
+`pio account token` after signing in with `pio account login`, then add it
+under Settings → Secrets and variables → Actions.
 
 ---
 

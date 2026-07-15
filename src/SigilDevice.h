@@ -138,6 +138,7 @@ private:
     void _sendRegister();
     void _handleMessage(const String& json);
     void _sendJson(JsonDocument& doc);
+    void _sendAck(const char* command, const char* status);
     void _debugln(const String& msg);
 
     // Config message handling and NVS persistence.

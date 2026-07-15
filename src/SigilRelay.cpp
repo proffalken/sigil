@@ -18,6 +18,8 @@ SigilRelay::SigilRelay(const char* relayId)
     , _debug(nullptr)
     , _pendingTxReadyMs(0)
     , _lastRs485ActivityMs(0)
+    , _pendingAckSentMs(0)
+    , _pendingAckRetries(0)
 {
 #ifdef SIGIL_OTEL_ENABLED
     _pendingIsRegister = false;
@@ -102,6 +104,7 @@ void SigilRelay::update() {
         }
     }
 
+    _checkAckRetry();
     _flushPendingTx();
 
     // --- RS485 bus → Device ---
@@ -123,6 +126,23 @@ void SigilRelay::update() {
                 _handleConfig(doc);
             } else {
                 _forwardToDevice(raw);
+
+                // Track for ack/retry only if it's a command for our own
+                // device — see "Command ack/retry" in SigilRelay.h. Commands
+                // for other devices on the bus are forwarded unconditionally
+                // above but never tracked.
+                if (!err && strcmp(doc["msg_type"] | "", "command") == 0
+                        && _knownDeviceId.length() > 0) {
+                    String cmdDeviceId   = doc["device_id"]   | "";
+                    String cmdSystemName = doc["system_name"] | "";
+                    if (cmdDeviceId == _knownDeviceId && cmdSystemName == _knownSystemName) {
+                        _pendingAckJson    = raw;
+                        _pendingAckCommand = doc["command"] | "";
+                        _pendingAckSentMs  = millis();
+                        _pendingAckRetries = 0;
+                        _debugln("[sigil] tracking ack for: " + _pendingAckCommand);
+                    }
+                }
             }
         } else {
             _debugln("[sigil] no JSON found in RS485 message");
@@ -153,6 +173,23 @@ void SigilRelay::_forwardToRS485(const String& json) {
         _msgsDropped++;
 #endif
         return;
+    }
+
+    // Command ack/retry bookkeeping — see class comment in SigilRelay.h.
+    const char* msgType = doc["msg_type"] | "";
+    if (strcmp(msgType, "register") == 0) {
+        _knownDeviceId   = doc["device_id"]   | "";
+        _knownSystemName = doc["system_name"] | "";
+        if (_pendingAckCommand.length() > 0) {
+            _debugln("[sigil] device rebooted — dropping pending ack tracking for: " + _pendingAckCommand);
+            _pendingAckCommand = "";
+        }
+    } else if (strcmp(msgType, "ack") == 0 && _pendingAckCommand.length() > 0) {
+        String ackCommand = doc["command"] | "";
+        if (ackCommand == _pendingAckCommand) {
+            _debugln("[sigil] ack received for: " + _pendingAckCommand);
+            _pendingAckCommand = "";
+        }
     }
 
     // Protocol fields at top level
@@ -235,6 +272,60 @@ void SigilRelay::_flushPendingTx() {
 #endif
 
     _pendingTx = "";
+}
+
+void SigilRelay::_checkAckRetry() {
+    if (_pendingAckCommand.length() == 0) return;
+
+    unsigned long now = millis();
+    SigilAckAction action = sigilAckAction(now, _pendingAckSentMs, _pendingAckRetries,
+                                            SIGIL_ACK_TIMEOUT_MS, SIGIL_ACK_MAX_RETRIES);
+
+    if (action == SigilAckAction::Wait) return;
+
+    if (action == SigilAckAction::Retry) {
+        _debugln("[sigil] no ack for " + _pendingAckCommand + ", retrying");
+        _forwardToDevice(_pendingAckJson);
+        _pendingAckRetries++;
+        _pendingAckSentMs = now;
+        return;
+    }
+
+    // GiveUp — only stop tracking once the timeout ack is actually queued.
+    // If the bus-TX slot is busy, leave _pendingAckCommand set: retries are
+    // already exhausted, so sigilAckAction() will keep returning GiveUp on
+    // every subsequent update() until _sendTimeoutAck() succeeds.
+    if (_sendTimeoutAck()) {
+        _debugln("[sigil] giving up on ack for: " + _pendingAckCommand);
+        _pendingAckCommand = "";
+    } else {
+        _debugln("[sigil] giving up on ack for: " + _pendingAckCommand + " — bus busy, will retry queuing");
+    }
+}
+
+bool SigilRelay::_sendTimeoutAck() {
+    if (_pendingTx.length() > 0) return false;
+
+    JsonDocument doc;
+    doc["msg_type"]    = "ack";
+    doc["relay_id"]    = _relayId;
+    doc["device_id"]   = _knownDeviceId;
+    doc["system_name"] = _knownSystemName;
+    doc["command"]     = _pendingAckCommand;
+    doc["status"]      = "timeout";
+
+    String output;
+    serializeJson(doc, output);
+    output += '\n';
+
+    _pendingTx        = output;
+    _pendingTxReadyMs = millis() + _jitterMs();
+    _debugln("[sigil] queued timeout ack for RS485: " + output);
+
+#ifdef SIGIL_OTEL_ENABLED
+    _pendingIsRegister = false;
+#endif
+    return true;
 }
 
 void SigilRelay::_forwardToDevice(const String& json) {

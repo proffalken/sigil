@@ -6,6 +6,7 @@
 #include <Stream.h>
 #include "SigilAttributes.h"
 #include "SigilHash.h"
+#include "SigilAckPolicy.h"
 
 // ── Limits (override before including this header if needed) ───────────────
 #ifndef SIGIL_BUS_QUIET_MS
@@ -13,6 +14,12 @@
 #endif
 #ifndef SIGIL_BUS_JITTER_MAX_MS
 #define SIGIL_BUS_JITTER_MAX_MS 20
+#endif
+#ifndef SIGIL_ACK_TIMEOUT_MS
+#define SIGIL_ACK_TIMEOUT_MS 2000
+#endif
+#ifndef SIGIL_ACK_MAX_RETRIES
+#define SIGIL_ACK_MAX_RETRIES 3
 #endif
 
 // ── SigilRelay ─────────────────────────────────────────────────────────────
@@ -39,6 +46,27 @@
 // collision detection here, so it's avoidance, not elimination. A message
 // waiting to go out simply delays reading the next one from the device;
 // nothing is dropped.
+//
+// ── Command ack/retry ────────────────────────────────────────────────────
+//
+// The relay passively learns its device's device_id/system_name from the
+// "register" message the device sends upward — it does not otherwise
+// inspect or filter traffic (see above). Only a "command" message whose
+// device_id/system_name match what's been learned is tracked: the relay
+// forwards it to the device and expects a matching "ack" message back
+// within SIGIL_ACK_TIMEOUT_MS. If none arrives, it re-forwards the same
+// command up to SIGIL_ACK_MAX_RETRIES times; if it still gives up, it
+// reports a synthetic {"status":"timeout"} ack upstream so the sender
+// gets a definitive signal instead of silence. Only one command is
+// tracked at a time — a new matching command supersedes tracking of an
+// older, not-yet-acked one. Commands for other devices on the bus, or
+// any command seen before the relay has learned its device's identity,
+// are forwarded exactly as before with no tracking at all.
+//
+// This only covers the relay↔device hop, which is a dedicated
+// point-to-point link Sigil fully controls. It does not retry the
+// controller↔relay hop over the shared RS485 bus — that's the external
+// command-issuing system's responsibility.
 //
 // ── Optional OTel metrics ──────────────────────────────────────────────────
 //
@@ -129,6 +157,17 @@ private:
     bool     _busClear(unsigned long now) const;
     uint32_t _jitterMs() const;
     void     _flushPendingTx();
+
+    // Command ack/retry — see class comment above.
+    String        _knownDeviceId;    // learned from the device's own register message
+    String        _knownSystemName;
+    String        _pendingAckJson;    // raw command JSON to re-forward on retry; empty = none pending
+    String        _pendingAckCommand; // command name, for matching an incoming ack
+    unsigned long _pendingAckSentMs;
+    uint8_t       _pendingAckRetries;
+
+    void _checkAckRetry();
+    bool _sendTimeoutAck(); // false if the bus-TX slot was busy and nothing was queued
 
     void _forwardToRS485(const String& json);
     void _forwardToDevice(const String& json);

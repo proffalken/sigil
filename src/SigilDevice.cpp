@@ -188,8 +188,8 @@ void SigilDevice::_handleMessage(const String& json) {
         for (uint8_t i = 0; i < _handlerCount; i++) {
             if (strcmp(_handlers[i].name, command) == 0) {
                 _debugln("[sigil] command dispatched: " + String(command));
-                _handlers[i].fn(params);
                 _sendAck(command, "ok");
+                _handlers[i].fn(params);
                 return;
             }
         }

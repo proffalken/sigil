@@ -15,6 +15,7 @@ SigilDevice::SigilDevice(const char* deviceId,
     , _registered(false)
     , _lastRegisterMs(0)
     , _registerIntervalMs(30000)
+    , _debug(nullptr)
     , _capCount(0)
     , _handlerCount(0)
     , _attrs()
@@ -71,10 +72,17 @@ void SigilDevice::begin(HardwareSerial& serial,
     _loadConfig();
 
     delay(bootDelayMs);   // wait for bootloader noise to clear before registering
+
+    _debugln("[sigil] device ready");
 }
 
 void SigilDevice::setRegisterInterval(uint32_t ms) {
     _registerIntervalMs = ms;
+}
+
+void SigilDevice::setDebugStream(Stream& stream) {
+    _debug = &stream;
+    _debugln("[sigil] debug enabled");
 }
 
 // String::indexOf() stops at embedded NUL bytes, which appear in bootloader
@@ -103,10 +111,14 @@ void SigilDevice::update() {
     // Poll for incoming messages (commands, acks) from the relay
     while (_serial && _serial->available()) {
         String raw = _serial->readStringUntil('\n');
+        _debugln("[sigil] rx from relay: " + raw);
+
         int jsonStart = findBrace(raw);
         if (jsonStart != -1) {
             if (jsonStart > 0) raw = raw.substring(jsonStart);
             _handleMessage(raw);
+        } else {
+            _debugln("[sigil] no JSON found in message");
         }
     }
 }
@@ -138,7 +150,11 @@ void SigilDevice::_sendRegister() {
 void SigilDevice::_handleMessage(const String& json) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
-    if (err) return;
+    if (err) {
+        _debugln("[sigil] JSON parse error: " + String(err.c_str()));
+        _debugln("[sigil] failed input: " + json);
+        return;
+    }
 
     const char* msgType = doc["msg_type"] | "";
 
@@ -153,6 +169,7 @@ void SigilDevice::_handleMessage(const String& json) {
                 _attrs.add(kv.key().c_str(), kv.value().as<const char*>());
             }
             _persistConfig();
+            _debugln("[sigil] config applied and persisted");
         }
         return;
     }
@@ -170,11 +187,13 @@ void SigilDevice::_handleMessage(const String& json) {
 
         for (uint8_t i = 0; i < _handlerCount; i++) {
             if (strcmp(_handlers[i].name, command) == 0) {
+                _debugln("[sigil] command dispatched: " + String(command));
                 _handlers[i].fn(params);
                 return;
             }
         }
-        // Unrecognised command — silently ignored
+        // Unrecognised command — silently ignored (visible only via debug)
+        _debugln("[sigil] unrecognized command: " + String(command));
     }
     // ack and all other msg_types are silently ignored
 }
@@ -185,6 +204,11 @@ void SigilDevice::_sendJson(JsonDocument& doc) {
     serializeJson(doc, output);
     output += '\n';
     _serial->print(output);
+    _debugln("[sigil] sent: " + output);
+}
+
+void SigilDevice::_debugln(const String& msg) {
+    if (_debug) _debug->println(msg);
 }
 
 // ── Config messages and NVS persistence ───────────────────────────────────
@@ -201,6 +225,7 @@ void SigilDevice::_loadConfig() {
     for (JsonPairConst kv : doc.as<JsonObjectConst>()) {
         _attrs.add(kv.key().c_str(), kv.value().as<const char*>());
     }
+    _debugln("[sigil] loaded persisted config");
 }
 
 void SigilDevice::_persistConfig() {

@@ -130,6 +130,10 @@ Declare a capability. Call before `begin()`. Capped at `SIGIL_MAX_CAPABILITIES` 
 void onCommand(const char* name, void (*handler)(JsonObjectConst params))
 ```
 Register a command handler. Capped at `SIGIL_MAX_HANDLERS` (default 8).
+After a matching handler runs, the device automatically sends an `"ack"`
+message upstream (`"status":"ok"`). A command with no matching handler
+gets `"status":"unrecognized"` instead of vanishing silently. See
+"Command ack/retry" below.
 
 ```cpp
 void begin(HardwareSerial& serial, uint32_t baud, int rxPin, int txPin,
@@ -176,6 +180,30 @@ two relays transmitting at the same instant. This is collision
 to tell a transmission collided after the fact, so occasional corrupted
 frames are still possible under load.
 
+### Command ack/retry
+
+The relay↔device link is a dedicated point-to-point connection, so Sigil
+guarantees command delivery on that hop (not the shared bus — see below):
+
+- The relay passively learns its attached device's `device_id`/
+  `system_name` from the `"register"` message the device sends upward. It
+  doesn't otherwise inspect bus traffic (see "namespace-agnostic" above).
+- A `"command"` message whose `device_id`/`system_name` match what's been
+  learned is tracked: the relay expects a matching `"ack"` back within
+  `SIGIL_ACK_TIMEOUT_MS`. If none arrives, it re-forwards the same command
+  to the device up to `SIGIL_ACK_MAX_RETRIES` times.
+- If still no ack after all retries, the relay sends a synthetic
+  `{"msg_type":"ack",...,"status":"timeout"}` upstream, so whatever issued
+  the command gets a definitive failure signal instead of silence.
+- Only one command is tracked at a time — a new matching command
+  supersedes tracking of an older, not-yet-acked one.
+- Commands for *other* devices on the bus, or any command seen before the
+  relay has learned its own device's identity, are forwarded exactly as
+  before with no tracking.
+- This only covers the relay↔device hop. The controller↔relay hop over
+  the shared RS485 bus has no retry here — that's the responsibility of
+  whatever system issues commands.
+
 ### Compile-time limits
 
 Override these **before** including any Sigil header:
@@ -187,8 +215,16 @@ Override these **before** including any Sigil header:
 #define SIGIL_MAX_HANDLERS        8  // max command handlers per device
 #define SIGIL_BUS_QUIET_MS        5  // ms the RS485 bus must be idle before a relay will transmit
 #define SIGIL_BUS_JITTER_MAX_MS  20  // max per-relay jitter delay (ms) before transmitting
+#define SIGIL_ACK_TIMEOUT_MS   2000  // ms the relay waits for a command ack before retrying
+#define SIGIL_ACK_MAX_RETRIES     3  // max times the relay re-forwards a command awaiting ack
 #include <SigilDevice.h>
 ```
+
+`SIGIL_ACK_TIMEOUT_MS` should exceed the slowest expected `loop()` period
+of your end device — a device that only calls `update()` once per second
+(as in the quick-start example above) won't notice a command any faster
+than that, so a short timeout would trigger retries against a perfectly
+healthy device.
 
 ---
 

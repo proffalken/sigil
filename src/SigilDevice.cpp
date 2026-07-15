@@ -189,11 +189,14 @@ void SigilDevice::_handleMessage(const String& json) {
             if (strcmp(_handlers[i].name, command) == 0) {
                 _debugln("[sigil] command dispatched: " + String(command));
                 _handlers[i].fn(params);
+                _sendAck(command, "ok");
                 return;
             }
         }
-        // Unrecognised command — silently ignored (visible only via debug)
+        // Unrecognised command — nack'd upstream, not just logged, so the
+        // sender knows definitively rather than the command vanishing.
         _debugln("[sigil] unrecognized command: " + String(command));
+        _sendAck(command, "unrecognized");
     }
     // ack and all other msg_types are silently ignored
 }
@@ -205,6 +208,16 @@ void SigilDevice::_sendJson(JsonDocument& doc) {
     output += '\n';
     _serial->print(output);
     _debugln("[sigil] sent: " + output);
+}
+
+void SigilDevice::_sendAck(const char* command, const char* status) {
+    JsonDocument doc;
+    doc["msg_type"]    = "ack";
+    doc["device_id"]   = _deviceId;
+    doc["system_name"] = _systemName;
+    doc["command"]     = command;
+    doc["status"]      = status;
+    _sendJson(doc);
 }
 
 void SigilDevice::_debugln(const String& msg) {

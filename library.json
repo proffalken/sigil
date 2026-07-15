@@ -1,6 +1,6 @@
 {
   "name": "Sigil",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Lightweight RS485 device networking library for Arduino/ESP32. Handles device registration, namespaced message routing, and command dispatch over newline-delimited JSON.",
   "keywords": ["RS485", "serial", "IoT", "home automation", "ESP32", "Arduino", "JSON"],
   "authors": {
@@ -18,6 +18,6 @@
     "bblanchon/ArduinoJson": "^7.0.0"
   },
   "export": {
-    "include": "src"
+    "include": ["src", "examples"]
   }
 }

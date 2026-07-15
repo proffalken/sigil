@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HardwareSerial.h>
+#include <Stream.h>
 #include <initializer_list>
 #include "SigilAttributes.h"
 
@@ -89,6 +90,12 @@ public:
     // Call before or after begin().
     void setRegisterInterval(uint32_t ms);
 
+    // Optional: direct device debug output to a Stream (e.g. Serial).
+    // When set, logs every sent/received message, parse errors, and
+    // command dispatch so you can trace exactly what the device is doing.
+    // Call before begin().
+    void setDebugStream(Stream& stream);
+
     // Call once per loop(). Sends register on first call (and periodically
     // thereafter), then polls for incoming commands/acks from the relay.
     void update();
@@ -118,6 +125,7 @@ private:
     bool             _registered;
     unsigned long    _lastRegisterMs;    // millis() when we last sent a register
     uint32_t         _registerIntervalMs;// 0 = no periodic re-registration
+    Stream*          _debug;             // nullptr = debug off
 
     SigilAttributes  _attrs;
 
@@ -130,6 +138,7 @@ private:
     void _sendRegister();
     void _handleMessage(const String& json);
     void _sendJson(JsonDocument& doc);
+    void _debugln(const String& msg);
 
     // Config message handling and NVS persistence.
     // A config message addressed to this device_id is consumed here.

@@ -5,6 +5,15 @@
 #include <HardwareSerial.h>
 #include <Stream.h>
 #include "SigilAttributes.h"
+#include "SigilHash.h"
+
+// ── Limits (override before including this header if needed) ───────────────
+#ifndef SIGIL_BUS_QUIET_MS
+#define SIGIL_BUS_QUIET_MS 5
+#endif
+#ifndef SIGIL_BUS_JITTER_MAX_MS
+#define SIGIL_BUS_JITTER_MAX_MS 20
+#endif
 
 // ── SigilRelay ─────────────────────────────────────────────────────────────
 //
@@ -18,6 +27,18 @@
 //
 // The relay is deliberately namespace-agnostic: it forwards everything and
 // lets end devices filter for themselves.
+//
+// ── RS485 bus contention ─────────────────────────────────────────────────
+//
+// Multiple relays typically share one RS485 bus, so upstream writes are not
+// sent immediately. Instead update() holds at most one outgoing message and
+// writes it once the bus has been quiet for SIGIL_BUS_QUIET_MS *and* a
+// per-relay jitter delay (a deterministic hash of relayId, up to
+// SIGIL_BUS_JITTER_MAX_MS) has elapsed. This reduces the chance of two
+// relays transmitting at the same instant — RS485 half-duplex has no true
+// collision detection here, so it's avoidance, not elimination. A message
+// waiting to go out simply delays reading the next one from the device;
+// nothing is dropped.
 //
 // ── Optional OTel metrics ──────────────────────────────────────────────────
 //
@@ -96,6 +117,18 @@ private:
     HardwareSerial* _device;
     SigilAttributes _attrs;
     Stream*         _debug;   // nullptr = debug off
+
+    // Bus-contention avoidance — see class comment above.
+    String        _pendingTx;         // serialized message awaiting bus access; empty = none pending
+    unsigned long _pendingTxReadyMs;  // earliest millis() we may attempt to send _pendingTx
+    unsigned long _lastRs485ActivityMs; // millis() bytes were last seen on _rs485
+#ifdef SIGIL_OTEL_ENABLED
+    bool _pendingIsRegister; // whether _pendingTx is a register message, for _registrationsSeen
+#endif
+
+    bool     _busClear(unsigned long now) const;
+    uint32_t _jitterMs() const;
+    void     _flushPendingTx();
 
     void _forwardToRS485(const String& json);
     void _forwardToDevice(const String& json);

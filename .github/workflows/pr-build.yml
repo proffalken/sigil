@@ -19,3 +19,6 @@ jobs:
 
       - name: Build BasicDevice example
         run: pio run -d examples/BasicDevice
+
+      - name: Run unit tests
+        run: pio test -e native

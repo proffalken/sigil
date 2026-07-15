@@ -58,7 +58,13 @@ public:
         }
 
         for (uint8_t i = 0; i < _count; i++) {
-            attrs[_entries[i].key] = _entries[i].value;
+            // ArduinoJson's JsonObject::operator[] fails to find an existing
+            // member (and inserts a duplicate key instead of overwriting it)
+            // when the lookup key is a `const char*` but the member already
+            // present in the document was set via a mutable `char*`. Since
+            // this method is const, _entries[i].key/value decay to `const
+            // char*` — cast back to `char*` to force the working code path.
+            attrs[const_cast<char*>(_entries[i].key)] = const_cast<char*>(_entries[i].value);
         }
     }
 

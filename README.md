@@ -167,17 +167,26 @@ void begin(HardwareSerial& rs485Serial,  uint32_t rs485Baud,  int rs485Rx,  int 
 ```cpp
 void update()
 ```
-Call every `loop()` iteration.
+Call every `loop()` iteration. When multiple relays share one RS485 bus,
+`update()` holds at most one outgoing message and only writes it once the
+bus has been quiet for `SIGIL_BUS_QUIET_MS` and a per-relay jitter delay
+has elapsed (see `SIGIL_BUS_JITTER_MAX_MS` below), to reduce the chance of
+two relays transmitting at the same instant. This is collision
+*avoidance*, not detection or elimination — RS485 half-duplex has no way
+to tell a transmission collided after the fact, so occasional corrupted
+frames are still possible under load.
 
 ### Compile-time limits
 
 Override these **before** including any Sigil header:
 
 ```cpp
-#define SIGIL_MAX_ATTRIBUTES    16  // max attributes per device or relay
-#define SIGIL_MAX_CAPABILITIES   8  // max capabilities per device
-#define SIGIL_MAX_PARAMS         8  // max params per capability
-#define SIGIL_MAX_HANDLERS       8  // max command handlers per device
+#define SIGIL_MAX_ATTRIBUTES     16  // max attributes per device or relay
+#define SIGIL_MAX_CAPABILITIES    8  // max capabilities per device
+#define SIGIL_MAX_PARAMS          8  // max params per capability
+#define SIGIL_MAX_HANDLERS        8  // max command handlers per device
+#define SIGIL_BUS_QUIET_MS        5  // ms the RS485 bus must be idle before a relay will transmit
+#define SIGIL_BUS_JITTER_MAX_MS  20  // max per-relay jitter delay (ms) before transmitting
 #include <SigilDevice.h>
 ```
 

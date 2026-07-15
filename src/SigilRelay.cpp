@@ -16,8 +16,11 @@ SigilRelay::SigilRelay(const char* relayId)
     , _device(nullptr)
     , _attrs()
     , _debug(nullptr)
+    , _pendingTxReadyMs(0)
+    , _lastRs485ActivityMs(0)
 {
 #ifdef SIGIL_OTEL_ENABLED
+    _pendingIsRegister = false;
     _otelReady         = false;
     _msgsUpstream      = 0;
     _msgsDownstream    = 0;
@@ -80,8 +83,13 @@ void SigilRelay::update() {
         return -1;
     };
 
+    bool rs485HasData = _rs485 && _rs485->available();
+    if (rs485HasData) _lastRs485ActivityMs = millis();
+
     // --- Device → RS485 bus ---
-    if (_device && _device->available()) {
+    // Skip reading a new line while one is still queued for the bus — the
+    // pogo-pin UART buffers it, nothing is lost, only delayed.
+    if (_pendingTx.length() == 0 && _device && _device->available()) {
         String raw = _device->readStringUntil('\n');
         _debugln("[sigil] rx from device: " + raw);
 
@@ -94,8 +102,10 @@ void SigilRelay::update() {
         }
     }
 
+    _flushPendingTx();
+
     // --- RS485 bus → Device ---
-    if (_rs485 && _rs485->available()) {
+    if (rs485HasData) {
         String raw = _rs485->readStringUntil('\n');
         _debugln("[sigil] rx from RS485: " + raw);
 
@@ -187,14 +197,44 @@ void SigilRelay::_forwardToRS485(const String& json) {
     String output;
     serializeJson(doc, output);
     output += '\n';
-    _rs485->print(output);
-    _debugln("[sigil] forwarded to RS485: " + output);
+
+    // Queue rather than write immediately — see "RS485 bus contention" in
+    // SigilRelay.h. _flushPendingTx() sends it once the bus is clear.
+    _pendingTx        = output;
+    _pendingTxReadyMs = millis() + _jitterMs();
+    _debugln("[sigil] queued for RS485: " + output);
+
+#ifdef SIGIL_OTEL_ENABLED
+    _pendingIsRegister = strcmp(doc["msg_type"] | "", "register") == 0;
+#endif
+}
+
+bool SigilRelay::_busClear(unsigned long now) const {
+    if (_rs485 && _rs485->available()) return false; // mid-frame, someone's still sending
+    return (now - _lastRs485ActivityMs) >= SIGIL_BUS_QUIET_MS;
+}
+
+uint32_t SigilRelay::_jitterMs() const {
+    return sigilHash(_relayId) % (SIGIL_BUS_JITTER_MAX_MS + 1);
+}
+
+void SigilRelay::_flushPendingTx() {
+    if (_pendingTx.length() == 0) return;
+
+    unsigned long now = millis();
+    if (now < _pendingTxReadyMs) return;
+    if (!_busClear(now)) return;
+
+    _rs485->print(_pendingTx);
+    _debugln("[sigil] forwarded to RS485: " + _pendingTx);
 
 #ifdef SIGIL_OTEL_ENABLED
     _msgsUpstream++;
-    _lastMessageMs = millis();
-    if (strcmp(doc["msg_type"] | "", "register") == 0) _registrationsSeen++;
+    _lastMessageMs = now;
+    if (_pendingIsRegister) _registrationsSeen++;
 #endif
+
+    _pendingTx = "";
 }
 
 void SigilRelay::_forwardToDevice(const String& json) {

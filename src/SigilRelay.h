@@ -167,7 +167,7 @@ private:
     uint8_t       _pendingAckRetries;
 
     void _checkAckRetry();
-    void _sendTimeoutAck();
+    bool _sendTimeoutAck(); // false if the bus-TX slot was busy and nothing was queued
 
     void _forwardToRS485(const String& json);
     void _forwardToDevice(const String& json);

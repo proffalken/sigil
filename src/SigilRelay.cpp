@@ -291,17 +291,20 @@ void SigilRelay::_checkAckRetry() {
         return;
     }
 
-    // GiveUp
-    _debugln("[sigil] giving up on ack for: " + _pendingAckCommand);
-    _sendTimeoutAck();
-    _pendingAckCommand = "";
+    // GiveUp — only stop tracking once the timeout ack is actually queued.
+    // If the bus-TX slot is busy, leave _pendingAckCommand set: retries are
+    // already exhausted, so sigilAckAction() will keep returning GiveUp on
+    // every subsequent update() until _sendTimeoutAck() succeeds.
+    if (_sendTimeoutAck()) {
+        _debugln("[sigil] giving up on ack for: " + _pendingAckCommand);
+        _pendingAckCommand = "";
+    } else {
+        _debugln("[sigil] giving up on ack for: " + _pendingAckCommand + " — bus busy, will retry queuing");
+    }
 }
 
-void SigilRelay::_sendTimeoutAck() {
-    if (_pendingTx.length() > 0) {
-        _debugln("[sigil] bus busy — dropping timeout ack for: " + _pendingAckCommand);
-        return;
-    }
+bool SigilRelay::_sendTimeoutAck() {
+    if (_pendingTx.length() > 0) return false;
 
     JsonDocument doc;
     doc["msg_type"]    = "ack";
@@ -322,6 +325,7 @@ void SigilRelay::_sendTimeoutAck() {
 #ifdef SIGIL_OTEL_ENABLED
     _pendingIsRegister = false;
 #endif
+    return true;
 }
 
 void SigilRelay::_forwardToDevice(const String& json) {

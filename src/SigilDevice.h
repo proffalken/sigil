@@ -6,6 +6,7 @@
 #include <Stream.h>
 #include <initializer_list>
 #include "SigilAttributes.h"
+#include "SigilEventMessage.h"
 
 // ── Limits (override before including this header if needed) ───────────────
 #ifndef SIGIL_MAX_CAPABILITIES
@@ -114,6 +115,25 @@ public:
         JsonObject r       = readings.add<JsonObject>();
         r["name"]          = name;
         r["value"]         = value;
+        _sendJson(doc);
+    }
+
+    // Send a self-describing event as a single atomic message
+    // (msg_type: "event") — a discrete "this happened, here's the one fact
+    // about it" notification, distinct from a continuous sendReading()
+    // stream. Device attributes are included automatically under
+    // "attributes". T may be any type ArduinoJson can serialise.
+    template <typename T>
+    void sendEvent(const char* eventName, T value) {
+        JsonDocument doc;
+        sigilBuildEventDoc(doc, _deviceId, _systemName, eventName, value, _attrs);
+        _sendJson(doc);
+    }
+
+    // Bare event with no associated value, e.g. sendEvent("cycle_started").
+    void sendEvent(const char* eventName) {
+        JsonDocument doc;
+        sigilBuildEventDoc(doc, _deviceId, _systemName, eventName, _attrs);
         _sendJson(doc);
     }
 

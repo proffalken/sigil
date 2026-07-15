@@ -152,6 +152,14 @@ void sendReading(const char* name, T value)
 ```
 Send a single sensor reading. `T` can be any type ArduinoJson can serialise (`int`, `float`, `bool`, etc.).
 
+```cpp
+template <typename T>
+void sendEvent(const char* eventName, T value)
+
+void sendEvent(const char* eventName)
+```
+Send a self-describing event as a single atomic message (`msg_type: "event"`) — a discrete "this happened, here's the one fact about it" notification, e.g. `sendEvent("cycle_complete", "0142310")`. Distinct from `sendReading`: a reading is one value in an ongoing sensor stream, an event is a one-off occurrence with (optionally) one associated value. The no-value overload sends a bare event, e.g. `sendEvent("cycle_started")`. Device attributes are included automatically, same as `sendReading`.
+
 ### `SigilRelay`
 
 ```cpp

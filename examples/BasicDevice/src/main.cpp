@@ -9,6 +9,7 @@ SigilDevice device("example01", "sensor", "home_automation");
 
 void handlePing(JsonObjectConst params) {
     device.sendReading("pong", true);
+    device.sendEvent("ping_handled");
 }
 
 void setup() {
